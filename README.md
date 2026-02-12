@@ -67,14 +67,14 @@ install.packages("lubridate")
 
 ---
 
-Reproducibility Notes
+## Reproducibility Notes
 - Missing values were not imputed.
 - All results and visualisations are generated programmatically from the raw datasets.
 - The workflow is structured and fully reproducible.
 
 ---
 
-Author
+## Author
 Yun-Ju Chen
 MSc Data Science | University of Sheffield
 Skills: R, Data Analysis, Data Cleaning, Data Visualisation, Time-Series Exploration

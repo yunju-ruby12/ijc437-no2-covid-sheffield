@@ -1,9 +1,10 @@
-📊 NO₂ Variation Before, During, and After COVID-19
+## NO₂ Variation Before, During, and After COVID-19
 Devonshire Green Monitoring Station, Sheffield (2018–2023)
 
 This project investigates how hourly nitrogen dioxide (NO₂) concentrations changed across three key periods: pre-COVID (2018), during COVID (2020), and post-COVID (2023).
 
 Using openly available UK-AIR monitoring data, the analysis explores inter-annual differences, seasonal patterns, and diurnal (hourly) variation in urban air pollution.
+
 ---
 
 ## Research Questions

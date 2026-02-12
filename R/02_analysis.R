@@ -230,3 +230,8 @@ p_diurnal <- ggplot(diurnal, aes(x = hour, y = mean_NO2, color = factor(year), g
            size = 3)
 
 p_diurnal
+
+
+# Save annotated diurnal plot to file 
+ggsave("outputs/figures/figure3_diurnal_mean_annotated.png", 
+       p_diurnal, width = 9, height = 5, dpi = 300)

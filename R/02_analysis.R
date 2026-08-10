@@ -7,7 +7,8 @@
 # Load libraries==============================
 library(tidyverse)
 library(lubridate)
-
+library(dplyr)
+library(ggplot2)
 
 # Create output folders=========
 dir.create("outputs/figures", recursive = TRUE, showWarnings = FALSE)
@@ -66,6 +67,14 @@ str(data_all$datetime)
 
 
 
+# Add hour, weekday and weekend flag for diurnal / weekday-weekend analysis (RQ2)
+data_all <- data_all %>%
+  mutate(
+    hour = hour(datetime),
+    weekday_name = wday(datetime, label = TRUE, abbr = FALSE, week_start = 1),
+    is_weekend = wday(datetime, week_start = 1) %in% c(6, 7)
+  )
+
 
 
 
@@ -105,17 +114,33 @@ dir.create("outputs/tables", recursive = TRUE, showWarnings = FALSE)
 # Export summary statistics(.)
 readr::write_csv(year_summary, "outputs/tables/year_summary.csv")
 
-
+# High-contrast pollution narrative palette
+year_colors <- c(
+  "2018" = "#D7191C",  # strong red (higher pollution)
+  "2020" = "#7B3294",  # deep purple (transition)
+  "2023" = "#1A9641"   # strong green (lower pollution)
+)
 
 
 # Figure 1: Distribution of NO2 by year (RQ1) ============
-p_box <- ggplot(data_all, aes(x = factor(year), y = NO2)) +
-  geom_boxplot(outlier.alpha = 0.3) +
+p_box <- ggplot(data_all,
+                aes(x = factor(year),
+                    y = NO2,
+                    fill = factor(year))) +
+  
+  geom_boxplot(alpha = 0.7) +
+  
+  scale_fill_manual(values = year_colors, name = "Year") +
+  
   labs(
-    title = "Distribution of hourly NO2 by year (Devonshire Green)",
+    title = "Distribution of Hourly NO2 by Year",
     x = "Year",
-    y = "Hourly NO2 (µg/m³)"
-  )
+    y = "Hourly NO2 Concentration (µg/m³)",
+    fill = "Year"
+  ) +
+  
+  theme_minimal()
+
 
 # Display plot in RStudio
 p_box
@@ -139,6 +164,7 @@ monthly <- data_all %>%
 
 p_month <- ggplot(monthly, aes(x = month, y = mean_NO2, color = factor(year), group = year)) +
   geom_line(linewidth = 1) +
+  scale_color_manual(values = year_colors, name = "Year") +
   labs(
     title = "Monthly mean NO2 by year (Devonshire Green)",
     x = "Month",
@@ -158,80 +184,385 @@ ggsave("outputs/figures/figure2_monthly_mean.png",
 
 
 
-# Figure 3: Diurnal pattern (hour-of-day mean NO2 by year)
+# Figure 3: Diurnal variation (Ridgeline plot)
 
+# Build the diurnal summary table (mean NO2 by year and hour)
 diurnal <- data_all %>%
-  mutate(hour = hour(datetime)) %>%
   group_by(year, hour) %>%
   summarise(mean_NO2 = mean(NO2, na.rm = TRUE), .groups = "drop")
 
-
-
-# Define peak periods
+# Define peak windows
 morning_start <- 7
 morning_end   <- 10
 evening_start <- 18
 evening_end   <- 22
 
-# Calculate lower boundary of y-axis for placing labels
-y_bottom <- min(diurnal$mean_NO2, na.rm = TRUE)
+# Set label vertical position (between 10–15)
+peak_label_y <- 12.5
 
-# Create diurnal plot with highlighted peak periods
-p_diurnal <- ggplot(diurnal, aes(x = hour, y = mean_NO2, color = factor(year), group = year)) +
+# Identify peak hours within each window
+peak_data <- diurnal %>%
+  group_by(year) %>%
+  summarise(
+    morning_hour = hour[hour >= morning_start & hour <= morning_end]
+    [which.max(mean_NO2[hour >= morning_start & hour <= morning_end])],
+    morning_value = max(mean_NO2[hour >= morning_start & hour <= morning_end]),
+    evening_hour = hour[hour >= evening_start & hour <= evening_end]
+    [which.max(mean_NO2[hour >= evening_start & hour <= evening_end])],
+    evening_value = max(mean_NO2[hour >= evening_start & hour <= evening_end])
+  ) %>%
+  pivot_longer(
+    cols = c(morning_hour, evening_hour, morning_value, evening_value),
+    names_to = c("peak_type", ".value"),
+    names_pattern = "(morning|evening)_(hour|value)"
+  )
+
+# Create plot
+p_diurnal_curve <- ggplot(diurnal,
+                          aes(x = hour, y = mean_NO2,
+                              color = factor(year),
+                              group = year)) +
   
-  # Add shaded rectangle for morning peak period
+  # Shaded peak windows
   annotate("rect",
            xmin = morning_start,
            xmax = morning_end,
-           ymin = -Inf,
+           ymin = 0,
            ymax = Inf,
+           fill = "grey70",
            alpha = 0.15) +
   
-  # Add shaded rectangle for evening peak period
   annotate("rect",
            xmin = evening_start,
            xmax = evening_end,
-           ymin = -Inf,
+           ymin = 0,
            ymax = Inf,
+           fill = "grey70",
            alpha = 0.15) +
   
-  # Plot diurnal mean NO2 lines for each year
-  geom_line(linewidth = 1) +
+  # Diurnal curves
+  geom_line(linewidth = 1.1) +
   
-  # Format x-axis to show every 2 hours
+  # Peak points
+  geom_point(data = peak_data,
+             aes(x = hour, y = value),
+             size = 3,
+             show.legend = FALSE) +
+  
+  # Peak value labels
+  geom_text(data = peak_data,
+            aes(x = hour,
+                y = ifelse(year == 2023,
+                           value - 2,   # 2023 put under lines
+                           value + 2),  # others put above
+                label = round(value, 1)),
+            size = 3,
+            show.legend = FALSE) +
+  
+  # Custom colours
+  scale_color_manual(values = year_colors, name = "Year") +
+  
+  # Axis formatting
   scale_x_continuous(breaks = seq(0, 23, 2)) +
   
-  # Add plot title and axis labels
   labs(
     title = "Diurnal variation of NO2 by year (Devonshire Green)",
     x = "Hour of day",
-    y = "Mean NO2 (µg/m³)",
-    color = "Year"
+    y = "Mean NO2 (µg/m³)"
   ) +
   
-  # Add label for morning peak
+  # Peak window labels (moved upward to 12.5)
   annotate("label",
-           x = (morning_start + morning_end)/2,
-           y = y_bottom + 1,
-           label = "Morning peak",
-           color = "white",
+           x = (morning_start + morning_end) / 2,
+           y = peak_label_y,
+           label = "Morning Peak",
            fill = "black",
-           label.size = 0,
+           color = "white",
            size = 3) +
   
-  # Add label for evening peak
   annotate("label",
-           x = (evening_start + evening_end)/2,
-           y = y_bottom + 1,
-           label = "Evening peak",
-           color = "white",
+           x = (evening_start + evening_end) / 2,
+           y = peak_label_y,
+           label = "Evening Peak",
            fill = "black",
-           label.size = 0,
-           size = 3)
+           color = "white",
+           size = 3) +
+  
+  theme_minimal()
 
-p_diurnal
+p_diurnal_curve
+
+ggsave("outputs/figures/figure3_diurnal_curve_peaks.png",
+       p_diurnal_curve, width = 9, height = 5, dpi = 300)
+
+# Figure 4: Month × Hour Heatmap
+# Add month and hour variables extracted from datetime
+# Aggregate mean NO2 by year, month and hour
+heatmap_data <- data_all %>%
+  group_by(year, month, hour) %>%
+  summarise(mean_NO2 = mean(NO2, na.rm = TRUE)) %>%
+  ungroup()
 
 
-# Save annotated diurnal plot to file 
-ggsave("outputs/figures/figure3_diurnal_mean_annotated.png", 
-       p_diurnal, width = 9, height = 5, dpi = 300)
+# Set custom year order for faceting (swap 2018 and 2023)
+heatmap_data <- heatmap_data %>%
+  mutate(year = factor(year, levels = c(2023, 2020, 2018)))
+
+
+# Create heatmap visualisation showing interaction between seasonal and diurnal patterns
+p_heatmap <- ggplot(heatmap_data,
+                    aes(x = hour, y = month, fill = mean_NO2)) +
+  
+  # Use tiles to represent mean NO2 concentration
+  geom_tile() +
+  
+  # Separate panels by year for comparison
+  facet_wrap(~ year, ncol = 1) +
+  
+  # Apply perceptually uniform colour scale
+  scale_fill_viridis_c(
+    option = "C",
+    direction = -1,
+    name = "Mean NO2 (µg/m³)"
+  ) +
+  
+  # Display hour labels every 2 hours
+  scale_x_continuous(breaks = seq(0, 23, 2)) +
+  
+  # Add descriptive title and axis labels
+  labs(
+    title = "Monthly and Diurnal Structure of NO2 Concentrations",
+    x = "Hour of Day",
+    y = "Mean NO2 (µg/m³)"
+  ) +
+  
+  # Use minimal theme for clarity
+  theme_minimal()
+
+
+# Display heatmap in RStudio
+p_heatmap
+
+
+# Save heatmap to outputs folder
+ggsave(
+  "outputs/figures/figure4_heatmap_month_hour.png",
+  p_heatmap,
+  width = 8,
+  height = 10,
+  dpi = 300)
+
+
+
+# Figure 5:  Monthly NO2 Difference Relative to 2020 Baseline
+# Extract 2020 monthly mean as baseline
+baseline_2020 <- monthly %>%
+  filter(year == 2020) %>%
+  select(month_num, baseline_NO2 = mean_NO2)
+
+# Join baseline back and calculate difference
+monthly_diff <- monthly %>%
+  left_join(baseline_2020, by = "month_num") %>%
+  mutate(
+    diff_from_2020 = mean_NO2 - baseline_NO2,
+    ymin = pmin(0, diff_from_2020),   # lower ribbon bound
+    ymax = pmax(0, diff_from_2020)    # upper ribbon bound
+  ) %>%
+  filter(year != 2020)   # remove baseline from delta plot
+
+
+# Create Ribbon + Line plot
+p_ribbon <- ggplot(
+  monthly_diff,
+  aes(x = month, y = diff_from_2020, group = year)
+) +
+  
+  # Ribbon shows magnitude of difference from 2020
+  geom_ribbon(
+    aes(ymin = ymin, ymax = ymax, fill = factor(year)),
+    alpha = 0.25
+  ) +
+  
+  # Line shows structure of monthly deviation
+  geom_line(
+    aes(color = factor(year)),
+    linewidth = 1.2
+  ) +
+  
+  # Add points for readability
+  geom_point(
+    aes(color = factor(year)),
+    size = 2.4
+  ) +
+  
+  # Reference line at zero (no difference)
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    linewidth = 0.7
+  ) +
+  
+  # Apply consistent year colour palette
+  scale_color_manual(values = year_colors, name = "Year") +
+  scale_fill_manual(values = year_colors, name = "Year") +
+  
+  # Labels
+  labs(
+    title = "Monthly NO2 Change Relative to 2020 Baseline",
+    subtitle = "Positive values indicate higher NO2 than 2020; negative values indicate lower",
+    x = "Month",
+    y = expression(Delta*" Mean NO"[2]*" vs 2020 ("*mu*"g/m"^3*")")
+  ) +
+  
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank()
+  )
+
+# Display plot
+p_ribbon
+
+
+# Save figure
+ggsave("outputs/figures/figure5_delta_vs_2020_ribbon.png",
+       p_ribbon, width = 9, height = 5, dpi = 300)
+
+
+
+  
+
+# Classify 2020 into lockdown phases (RQ3) 
+d2020_phase <- d2020 %>%
+  mutate(
+    date_only = as_date(datetime),
+    phase = case_when(
+      date_only < as_date("2020-03-23") ~ "Pre-lockdown",
+      (date_only >= as_date("2020-03-23") & date_only <= as_date("2020-06-30")) |
+        (date_only >= as_date("2020-11-05") & date_only <= as_date("2020-12-02")) ~ "Lockdown",
+      TRUE ~ "Eased"
+      ),
+    phase = factor(phase, levels = c("Pre-lockdown", "Lockdown", "Eased")),
+    is_weekend = wday(datetime, week_start = 1) %in% c(6, 7),
+    hour = hour(datetime)
+    )
+
+
+# Figure 6: boxplot of NO2 by 2020 lockdown phase
+p_phase_box <- ggplot(d2020_phase, aes(x = phase, y = NO2, fill = phase)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    title = "NO2 by 2020 COVID Restriction Phase (Devonshire Green)",
+    x = NULL,
+    y = "Hourly NO2 (µg/m³)"
+    ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+	 
+p_phase_box
+
+ggsave("outputs/figures/figure6_2020_phase_boxplot.png",
+       p_phase_box, width = 8, height = 5.5, dpi = 300)
+
+
+
+
+
+# Weekday vs weekend WITHIN 2020, by phase (RQ3)
+wk_by_phase <- d2020_phase %>%
+  group_by(phase, is_weekend) %>%
+  summarise(mean_NO2 = mean(NO2, na.rm = TRUE), n = n(), .groups = "drop") %>%
+  mutate(day_type = if_else(is_weekend, "Weekend", "Weekday"))
+
+
+p_wk_phase <- ggplot(wk_by_phase, aes(x = phase, y = mean_NO2, fill = day_type)) +
+  geom_col(position = position_dodge(width = 0.9)) +
+  geom_text(
+    aes(label = round(mean_NO2, 1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.4,
+    size = 3.3
+  ) +
+  labs(
+    title = "Weekday vs Weekend Mean NO2 by 2020 Phase (Devonshire Green)",
+    x = NULL,
+    y = "Mean Hourly NO2 (µg/m³)",
+    fill = NULL
+  ) +
+  theme_minimal() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12)))  # leave headroom for labels
+
+p_wk_phase
+
+ggsave("outputs/figures/figure7_weekday_weekend_by_phase.png",
+       p_wk_phase, width = 8, height = 5, dpi = 300)
+
+write_csv(wk_by_phase, "outputs/tables/weekday_weekend_by_phase.csv")
+
+
+
+
+
+# Weekday vs weekend ACROSS ALL THREE YEARS (RQ2)
+wk_by_year <- data_all %>%
+  group_by(year, is_weekend) %>%
+  summarise(mean_NO2 = mean(NO2, na.rm = TRUE), n = n(), .groups = "drop") %>%
+  mutate(day_type = if_else(is_weekend, "Weekend", "Weekday"))
+
+
+p_wk_year <- ggplot(wk_by_year, aes(x = factor(year), y = mean_NO2, fill = day_type)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = round(mean_NO2, 1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.4,
+    size = 3.3) +
+  labs(
+    title = "Weekday vs Weekend Mean NO2 by Year (Devonshire Green)",
+    x = "Year",
+    y = "Mean Hourly NO2 (µg/m³)",
+    fill = NULL
+  ) +
+  theme_minimal()
+
+p_wk_year
+
+ggsave("outputs/figures/figure8_weekday_weekend_by_year.png",
+       p_wk_year, width = 8, height = 5, dpi = 300)
+
+write_csv(wk_by_year, "outputs/tables/weekday_weekend_by_year.csv")
+
+
+
+
+# Statistical test 1: Welch's t-test, weekday vs weekend, by 2020 phase 
+t_test_by_phase <- d2020_phase %>%
+  group_by(phase) %>%
+  summarise(
+    t_stat = t.test(NO2 ~ is_weekend)$statistic,
+    p_value = t.test(NO2 ~ is_weekend)$p.value,
+    .groups = "drop"
+  )
+print(t_test_by_phase)
+write_csv(t_test_by_phase, "outputs/tables/weekday_weekend_ttest_by_phase.csv")
+
+
+
+# Statistical test 2: Welch's t-test, weekday vs weekend, by year
+t_test_by_year <- data_all %>%
+  group_by(year) %>%
+  summarise(
+    t_stat = t.test(NO2 ~ is_weekend)$statistic,
+    p_value = t.test(NO2 ~ is_weekend)$p.value,
+    .groups = "drop"
+  )
+print(t_test_by_year)
+write_csv(t_test_by_year, "outputs/tables/weekday_weekend_ttest_by_year.csv")
+
+
+
+
+# Statistical test 3: one-way ANOVA, weekday NO2 across the 3 phases 
+anova_model <- aov(NO2 ~ phase, data = d2020_phase %>% filter(!is_weekend))
+anova_summary <- summary(anova_model)
+print(anova_summary)
+
